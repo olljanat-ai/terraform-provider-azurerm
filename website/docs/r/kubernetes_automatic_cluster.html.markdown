@@ -149,7 +149,13 @@ The following arguments are supported:
 
 * `api_server_access` - (Optional) An `api_server_access` block as defined below.
 
+* `azure_active_directory_role_based_access_control` - (Optional) An `azure_active_directory_role_based_access_control` block as defined below.
+
 * `hosted_system` - (Optional) A `hosted_system` block as defined below.
+
+* `local_account_disabled` - (Optional) Should local accounts be disabled on this Kubernetes Cluster? Azure configures this for Kubernetes Automatic Clusters, so it's only sent to Azure when specified.
+
+* `microsoft_defender` - (Optional) A `microsoft_defender` block as defined below.
 
 * `monitor` - (Optional) A `monitor` block as defined below.
 
@@ -232,6 +238,22 @@ A `hosted_system` block supports the following:
 * `node_subnet_id` - (Required) The ID of the Subnet where the user nodes are hosted. Is required for bring your own networking
 
 * `system_node_subnet_id` - (Required) The ID of the Subnet where the system nodes are hosted. Changing this forces a new resource to be created. Is required for bring your own networking
+
+---
+
+An `azure_active_directory_role_based_access_control` block supports the following:
+
+* `admin_group_object_ids` - (Optional) A list of Object IDs of Microsoft Entra Groups which should have Admin Role on the Cluster.
+
+* `tenant_id` - (Optional) The Tenant ID used for Microsoft Entra Integration. This defaults to the Tenant of the Subscription the Cluster is deployed in.
+
+-> **Note:** Managed Microsoft Entra Integration and Azure RBAC for Kubernetes Authorization are always enabled for Kubernetes Automatic Clusters and therefore can't be configured.
+
+---
+
+A `microsoft_defender` block supports the following:
+
+* `log_analytics_workspace_id` - (Required) Specifies the ID of the Log Analytics Workspace where the audit logs collected by Microsoft Defender should be sent to.
 
 ---
 

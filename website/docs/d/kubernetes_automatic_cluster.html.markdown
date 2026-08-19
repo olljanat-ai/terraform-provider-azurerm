@@ -40,6 +40,8 @@ The following attributes are exported:
 
 * `api_server_access` - An `api_server_access` block as documented below.
 
+* `azure_active_directory_role_based_access_control` - An `azure_active_directory_role_based_access_control` block as documented below.
+
 * `current_kubernetes_version` - Contains the current version of Kubernetes running on the Cluster.
 
 * `dns_prefix` - The DNS Prefix of the Managed Kubernetes Automatic Cluster.
@@ -57,6 +59,10 @@ The following attributes are exported:
 * `kubelet_identity` - A `kubelet_identity` block as documented below.
 
 * `kubernetes_version` - The version of Kubernetes used on the Managed Kubernetes Automatic Cluster.
+
+* `local_account_disabled` - Whether local accounts are disabled on this Managed Kubernetes Automatic Cluster.
+
+* `microsoft_defender` - A `microsoft_defender` block as documented below.
 
 * `monitor` - A `monitor` block as documented below.
 
@@ -83,6 +89,14 @@ An `api_server_access` block exports the following:
 * `authorized_ip_ranges` - A list of IP ranges authorised to access the API server.
 
 * `subnet_id` - The ID of the subnet that the API server is accessible from.
+
+---
+
+An `azure_active_directory_role_based_access_control` block exports the following:
+
+* `admin_group_object_ids` - The list of Object IDs of Microsoft Entra Groups which have Admin Role on this Managed Kubernetes Automatic Cluster.
+
+* `tenant_id` - The Tenant ID used for Microsoft Entra Integration.
 
 ---
 
@@ -142,6 +156,12 @@ The `kubelet_identity` block exports the following:
 * `object_id` - The Object ID of the user-defined Managed Identity assigned to the Kubelets.
 
 * `user_assigned_identity_id` - The ID of the User Assigned Identity assigned to the Kubelets.
+
+---
+
+A `microsoft_defender` block exports the following:
+
+* `log_analytics_workspace_id` - The ID of the Log Analytics Workspace which the audit logs collected by Microsoft Defender are sent to.
 
 ---
 
