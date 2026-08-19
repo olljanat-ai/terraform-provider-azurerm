@@ -630,6 +630,11 @@ func (r KubernetesAutomaticClusterResource) Create() sdk.ResourceFunc {
 				return fmt.Errorf("expanding identity: %+v", err)
 			}
 
+			addonProfiles, err := expandKubernetesAutomaticClusterMonitorAddonProfiles(model.Monitor, nil)
+			if err != nil {
+				return fmt.Errorf("expanding `monitor`: %+v", err)
+			}
+
 			parameters := managedclusters.ManagedCluster{
 				Location: location.Normalize(model.Location),
 				Sku: &managedclusters.ManagedClusterSKU{
@@ -637,7 +642,7 @@ func (r KubernetesAutomaticClusterResource) Create() sdk.ResourceFunc {
 					Tier: pointer.To(managedclusters.ManagedClusterSKUTierStandard),
 				},
 				Properties: &managedclusters.ManagedClusterProperties{
-					AddonProfiles:          expandKubernetesAutomaticClusterMonitorAddonProfiles(model.Monitor, nil),
+					AddonProfiles:          addonProfiles,
 					ApiServerAccessProfile: expandKubernetesAutomaticClusterAPIAccessProfile(model),
 					AzureMonitorProfile:    expandKubernetesAutomaticClusterAzureMonitorProfile(model.Monitor, nil),
 					HostedSystemProfile:    expandKubernetesAutomaticClusterHostedSystemProfile(model.HostedSystemProfile),
@@ -809,7 +814,11 @@ func (r KubernetesAutomaticClusterResource) Update() sdk.ResourceFunc {
 
 			if metadata.ResourceData.HasChange("monitor") {
 				props.AzureMonitorProfile = expandKubernetesAutomaticClusterAzureMonitorProfile(model.Monitor, props.AzureMonitorProfile)
-				props.AddonProfiles = expandKubernetesAutomaticClusterMonitorAddonProfiles(model.Monitor, props.AddonProfiles)
+
+				props.AddonProfiles, err = expandKubernetesAutomaticClusterMonitorAddonProfiles(model.Monitor, props.AddonProfiles)
+				if err != nil {
+					return fmt.Errorf("expanding `monitor`: %+v", err)
+				}
 			}
 
 			if metadata.ResourceData.HasChange("identity") {
@@ -926,9 +935,9 @@ func expandKubernetesAutomaticClusterAzureMonitorProfile(input []MonitorProfileM
 
 // expandKubernetesAutomaticClusterMonitorAddonProfiles toggles the Container Insights (`omsagent`) addon, which
 // Azure enables by default for Automatic Clusters.
-func expandKubernetesAutomaticClusterMonitorAddonProfiles(input []MonitorProfileModel, existing *map[string]managedclusters.ManagedClusterAddonProfile) *map[string]managedclusters.ManagedClusterAddonProfile {
+func expandKubernetesAutomaticClusterMonitorAddonProfiles(input []MonitorProfileModel, existing *map[string]managedclusters.ManagedClusterAddonProfile) (*map[string]managedclusters.ManagedClusterAddonProfile, error) {
 	if len(input) == 0 {
-		return existing
+		return existing, nil
 	}
 
 	config := input[0]
@@ -954,18 +963,23 @@ func expandKubernetesAutomaticClusterMonitorAddonProfiles(input []MonitorProfile
 		omsAgent.Identity = existingOmsAgent.Identity
 
 		if config.LogAnalyticsWorkspaceID != "" {
+			workspaceID, err := workspaces.ParseWorkspaceIDInsensitively(config.LogAnalyticsWorkspaceID)
+			if err != nil {
+				return nil, fmt.Errorf("parsing `monitor.0.log_analytics_workspace_id`: %+v", err)
+			}
+
 			addonConfig := make(map[string]string)
 			if omsAgent.Config != nil {
 				addonConfig = *omsAgent.Config
 			}
-			addonConfig["logAnalyticsWorkspaceResourceID"] = config.LogAnalyticsWorkspaceID
+			addonConfig["logAnalyticsWorkspaceResourceID"] = workspaceID.ID()
 			omsAgent.Config = pointer.To(addonConfig)
 		}
 	}
 
 	addonProfiles[omsAgentKey] = omsAgent
 
-	return pointer.To(addonProfiles)
+	return pointer.To(addonProfiles), nil
 }
 
 func flattenKubernetesAutomaticClusterMonitorProfile(azureMonitorProfile *managedclusters.ManagedClusterAzureMonitorProfile, addonProfiles *map[string]managedclusters.ManagedClusterAddonProfile) ([]MonitorProfileModel, error) {
