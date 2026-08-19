@@ -31,17 +31,20 @@ import (
 )
 
 type KubernetesAutomaticClusterModel struct {
-	Name                   string                                     `tfschema:"name"`
-	Location               string                                     `tfschema:"location"`
-	ResourceGroupName      string                                     `tfschema:"resource_group_name"`
-	APIServerAccessProfile []APIServerAccessProfileModel              `tfschema:"api_server_access"`
-	HostedSystemProfile    []HostedSystemProfile                      `tfschema:"hosted_system"`
-	Identity               []identity.ModelSystemAssignedUserAssigned `tfschema:"identity"`
-	Monitor                []MonitorProfileModel                      `tfschema:"monitor"`
-	PrivateCluster         []PrivateClusterModel                      `tfschema:"private_cluster"`
-	ServiceMeshProfile     []ServiceMeshProfileModel                  `tfschema:"service_mesh"`
-	WebAppRoutingIngress   []WebAppRoutingIngressModel                `tfschema:"web_app_routing_ingress"`
-	Tags                   map[string]interface{}                     `tfschema:"tags"`
+	Name                     string                                     `tfschema:"name"`
+	Location                 string                                     `tfschema:"location"`
+	ResourceGroupName        string                                     `tfschema:"resource_group_name"`
+	APIServerAccessProfile   []APIServerAccessProfileModel              `tfschema:"api_server_access"`
+	AzureActiveDirectoryRBAC []AzureActiveDirectoryRBACModel            `tfschema:"azure_active_directory_role_based_access_control"`
+	HostedSystemProfile      []HostedSystemProfile                      `tfschema:"hosted_system"`
+	Identity                 []identity.ModelSystemAssignedUserAssigned `tfschema:"identity"`
+	LocalAccountDisabled     bool                                       `tfschema:"local_account_disabled"`
+	MicrosoftDefender        []MicrosoftDefenderModel                   `tfschema:"microsoft_defender"`
+	Monitor                  []MonitorProfileModel                      `tfschema:"monitor"`
+	PrivateCluster           []PrivateClusterModel                      `tfschema:"private_cluster"`
+	ServiceMeshProfile       []ServiceMeshProfileModel                  `tfschema:"service_mesh"`
+	WebAppRoutingIngress     []WebAppRoutingIngressModel                `tfschema:"web_app_routing_ingress"`
+	Tags                     map[string]interface{}                     `tfschema:"tags"`
 	// Computed fields
 	CurrentKubernetesVersion string            `tfschema:"current_kubernetes_version"`
 	FQDN                     string            `tfschema:"fully_qualified_domain_name"`
@@ -57,6 +60,11 @@ type APIServerAccessProfileModel struct {
 	AuthorizedIPRanges []string `tfschema:"authorized_ip_ranges"`
 	SubnetID           string   `tfschema:"subnet_id"`
 }
+type AzureActiveDirectoryRBACModel struct {
+	AdminGroupObjectIDs []string `tfschema:"admin_group_object_ids"`
+	TenantID            string   `tfschema:"tenant_id"`
+}
+
 type HostedSystemProfile struct {
 	NodeSubnetID       string `tfschema:"node_subnet_id"`
 	SystemNodeSubnetID string `tfschema:"system_node_subnet_id"`
@@ -69,6 +77,10 @@ type KubeConfigModel struct {
 	ClientKey            string `tfschema:"client_key"`
 	ClusterCACertificate string `tfschema:"cluster_ca_certificate"`
 }
+type MicrosoftDefenderModel struct {
+	LogAnalyticsWorkspaceID string `tfschema:"log_analytics_workspace_id"`
+}
+
 type MonitorProfileModel struct {
 	MetricsEnabled           bool   `tfschema:"metrics_enabled"`
 	ContainerInsightsEnabled bool   `tfschema:"container_insights_enabled"`
@@ -295,6 +307,34 @@ func (r KubernetesAutomaticClusterResource) Arguments() map[string]*pluginsdk.Sc
 			},
 		},
 
+		"azure_active_directory_role_based_access_control": {
+			Type:     pluginsdk.TypeList,
+			Optional: true,
+			// NOTE: O+C since Azure always configures Managed Microsoft Entra Integration for Automatic Clusters
+			Computed: true,
+			MaxItems: 1,
+			Elem: &pluginsdk.Resource{
+				Schema: map[string]*pluginsdk.Schema{
+					"admin_group_object_ids": {
+						Type:     pluginsdk.TypeList,
+						Optional: true,
+						Elem: &pluginsdk.Schema{
+							Type:         pluginsdk.TypeString,
+							ValidateFunc: validation.IsUUID,
+						},
+					},
+
+					"tenant_id": {
+						Type:     pluginsdk.TypeString,
+						Optional: true,
+						// NOTE: O+C since this is sourced from the client config when it isn't specified
+						Computed:     true,
+						ValidateFunc: validation.IsUUID,
+					},
+				},
+			},
+		},
+
 		"hosted_system": {
 			Type:     pluginsdk.TypeList,
 			Optional: true,
@@ -315,6 +355,28 @@ func (r KubernetesAutomaticClusterResource) Arguments() map[string]*pluginsdk.Sc
 						Required:     true,
 						ForceNew:     true,
 						ValidateFunc: commonids.ValidateSubnetID,
+					},
+				},
+			},
+		},
+
+		"local_account_disabled": {
+			Type:     pluginsdk.TypeBool,
+			Optional: true,
+			// NOTE: O+C since Azure configures local accounts for Automatic Clusters, this is only sent when it's specified
+			Computed: true,
+		},
+
+		"microsoft_defender": {
+			Type:     pluginsdk.TypeList,
+			Optional: true,
+			MaxItems: 1,
+			Elem: &pluginsdk.Resource{
+				Schema: map[string]*pluginsdk.Schema{
+					"log_analytics_workspace_id": {
+						Type:         pluginsdk.TypeString,
+						Required:     true,
+						ValidateFunc: workspaces.ValidateWorkspaceID,
 					},
 				},
 			},
@@ -635,6 +697,18 @@ func (r KubernetesAutomaticClusterResource) Create() sdk.ResourceFunc {
 				return fmt.Errorf("expanding `monitor`: %+v", err)
 			}
 
+			var securityProfile *managedclusters.ManagedClusterSecurityProfile
+			if len(model.MicrosoftDefender) > 0 {
+				defender, err := expandKubernetesAutomaticClusterMicrosoftDefender(model.MicrosoftDefender)
+				if err != nil {
+					return fmt.Errorf("expanding `microsoft_defender`: %+v", err)
+				}
+
+				securityProfile = &managedclusters.ManagedClusterSecurityProfile{
+					Defender: defender,
+				}
+			}
+
 			parameters := managedclusters.ManagedCluster{
 				Location: location.Normalize(model.Location),
 				Sku: &managedclusters.ManagedClusterSKU{
@@ -642,11 +716,14 @@ func (r KubernetesAutomaticClusterResource) Create() sdk.ResourceFunc {
 					Tier: pointer.To(managedclusters.ManagedClusterSKUTierStandard),
 				},
 				Properties: &managedclusters.ManagedClusterProperties{
+					AadProfile:             expandKubernetesAutomaticClusterAzureActiveDirectoryRBAC(model.AzureActiveDirectoryRBAC),
 					AddonProfiles:          addonProfiles,
 					ApiServerAccessProfile: expandKubernetesAutomaticClusterAPIAccessProfile(model),
 					AzureMonitorProfile:    expandKubernetesAutomaticClusterAzureMonitorProfile(model.Monitor, nil),
+					DisableLocalAccounts:   configuredLocalAccountDisabled(metadata, model.LocalAccountDisabled),
 					HostedSystemProfile:    expandKubernetesAutomaticClusterHostedSystemProfile(model.HostedSystemProfile),
 					IngressProfile:         expandKubernetesAutomaticClusterWebAppRoutingIngress(model.WebAppRoutingIngress),
+					SecurityProfile:        securityProfile,
 					ServiceMeshProfile:     expandKubernetesAutomaticClusterServiceMeshProfile(model.ServiceMeshProfile, nil),
 				},
 				Identity: clusterIdentity,
@@ -723,6 +800,12 @@ func (r KubernetesAutomaticClusterResource) flatten(ctx context.Context, metadat
 			if err != nil {
 				return fmt.Errorf("flattening API access profile: %w", err)
 			}
+
+			state.AzureActiveDirectoryRBAC = flattenKubernetesAutomaticClusterAzureActiveDirectoryRBAC(props.AadProfile)
+
+			state.LocalAccountDisabled = pointer.From(props.DisableLocalAccounts)
+
+			state.MicrosoftDefender = flattenKubernetesAutomaticClusterMicrosoftDefender(props.SecurityProfile)
 
 			state.HostedSystemProfile = flattenKubernetesAutomaticClusterHostedSystemProfile(props.HostedSystemProfile)
 
@@ -812,6 +895,26 @@ func (r KubernetesAutomaticClusterResource) Update() sdk.ResourceFunc {
 				props.ApiServerAccessProfile = expandKubernetesAutomaticClusterAPIAccessProfile(model)
 			}
 
+			if metadata.ResourceData.HasChange("azure_active_directory_role_based_access_control") {
+				props.AadProfile = expandKubernetesAutomaticClusterAzureActiveDirectoryRBAC(model.AzureActiveDirectoryRBAC)
+			}
+
+			if metadata.ResourceData.HasChange("local_account_disabled") {
+				props.DisableLocalAccounts = pointer.To(model.LocalAccountDisabled)
+			}
+
+			if metadata.ResourceData.HasChange("microsoft_defender") {
+				defender, err := expandKubernetesAutomaticClusterMicrosoftDefender(model.MicrosoftDefender)
+				if err != nil {
+					return fmt.Errorf("expanding `microsoft_defender`: %+v", err)
+				}
+
+				if props.SecurityProfile == nil {
+					props.SecurityProfile = &managedclusters.ManagedClusterSecurityProfile{}
+				}
+				props.SecurityProfile.Defender = defender
+			}
+
 			if metadata.ResourceData.HasChange("monitor") {
 				props.AzureMonitorProfile = expandKubernetesAutomaticClusterAzureMonitorProfile(model.Monitor, props.AzureMonitorProfile)
 
@@ -895,6 +998,101 @@ func flattenKubernetesAutomaticClusterHostedSystemProfile(profile *managedcluste
 	return []HostedSystemProfile{{
 		NodeSubnetID:       pointer.From(profile.NodeSubnetID),
 		SystemNodeSubnetID: pointer.From(profile.SystemNodeSubnetID),
+	}}
+}
+
+// expandKubernetesAutomaticClusterAzureActiveDirectoryRBAC configures which Microsoft Entra groups are granted
+// cluster admin. Managed Microsoft Entra Integration and Azure RBAC are always enabled for Automatic Clusters,
+// so they're sent as enabled rather than being exposed as configurable.
+func expandKubernetesAutomaticClusterAzureActiveDirectoryRBAC(input []AzureActiveDirectoryRBACModel) *managedclusters.ManagedClusterAADProfile {
+	if len(input) == 0 {
+		return nil
+	}
+
+	config := input[0]
+
+	profile := &managedclusters.ManagedClusterAADProfile{
+		AdminGroupObjectIDs: pointer.To(config.AdminGroupObjectIDs),
+		EnableAzureRBAC:     pointer.To(true),
+		Managed:             pointer.To(true),
+	}
+
+	if config.TenantID != "" {
+		profile.TenantID = pointer.To(config.TenantID)
+	}
+
+	return profile
+}
+
+func flattenKubernetesAutomaticClusterAzureActiveDirectoryRBAC(input *managedclusters.ManagedClusterAADProfile) []AzureActiveDirectoryRBACModel {
+	if input == nil {
+		return []AzureActiveDirectoryRBACModel{}
+	}
+
+	adminGroupObjectIDs := make([]string, 0)
+	if input.AdminGroupObjectIDs != nil {
+		adminGroupObjectIDs = *input.AdminGroupObjectIDs
+	}
+
+	return []AzureActiveDirectoryRBACModel{{
+		AdminGroupObjectIDs: adminGroupObjectIDs,
+		TenantID:            pointer.From(input.TenantID),
+	}}
+}
+
+// configuredLocalAccountDisabled returns the value of `local_account_disabled` only when it's present in the
+// configuration - AKS manages local accounts for Automatic Clusters, so sending the zero value on create would
+// override whatever Azure has configured.
+func configuredLocalAccountDisabled(metadata sdk.ResourceMetaData, localAccountDisabled bool) *bool {
+	rawConfig := metadata.ResourceData.GetRawConfig()
+	if rawConfig.IsNull() || !rawConfig.IsKnown() {
+		return nil
+	}
+
+	raw, ok := rawConfig.AsValueMap()["local_account_disabled"]
+	if !ok || raw.IsNull() {
+		return nil
+	}
+
+	return pointer.To(localAccountDisabled)
+}
+
+func expandKubernetesAutomaticClusterMicrosoftDefender(input []MicrosoftDefenderModel) (*managedclusters.ManagedClusterSecurityProfileDefender, error) {
+	if len(input) == 0 {
+		return &managedclusters.ManagedClusterSecurityProfileDefender{
+			SecurityMonitoring: &managedclusters.ManagedClusterSecurityProfileDefenderSecurityMonitoring{
+				Enabled: pointer.To(false),
+			},
+		}, nil
+	}
+
+	workspaceID, err := workspaces.ParseWorkspaceIDInsensitively(input[0].LogAnalyticsWorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("parsing `microsoft_defender.0.log_analytics_workspace_id`: %+v", err)
+	}
+
+	return &managedclusters.ManagedClusterSecurityProfileDefender{
+		LogAnalyticsWorkspaceResourceId: pointer.To(workspaceID.ID()),
+		SecurityMonitoring: &managedclusters.ManagedClusterSecurityProfileDefenderSecurityMonitoring{
+			Enabled: pointer.To(true),
+		},
+	}, nil
+}
+
+func flattenKubernetesAutomaticClusterMicrosoftDefender(input *managedclusters.ManagedClusterSecurityProfile) []MicrosoftDefenderModel {
+	if input == nil || input.Defender == nil || input.Defender.SecurityMonitoring == nil || !pointer.From(input.Defender.SecurityMonitoring.Enabled) {
+		return []MicrosoftDefenderModel{}
+	}
+
+	logAnalyticsWorkspaceID := ""
+	if v := pointer.From(input.Defender.LogAnalyticsWorkspaceResourceId); v != "" {
+		if workspaceID, err := workspaces.ParseWorkspaceIDInsensitively(v); err == nil {
+			logAnalyticsWorkspaceID = workspaceID.ID()
+		}
+	}
+
+	return []MicrosoftDefenderModel{{
+		LogAnalyticsWorkspaceID: logAnalyticsWorkspaceID,
 	}}
 }
 

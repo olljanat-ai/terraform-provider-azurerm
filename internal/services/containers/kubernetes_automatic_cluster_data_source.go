@@ -35,6 +35,7 @@ type KubernetesAutomaticClusterDataSourceModel struct {
 	Location          string `tfschema:"location"`
 
 	APIServerAccess          []APIServerAccessDataSourceModel           `tfschema:"api_server_access"`
+	AzureActiveDirectoryRBAC []AzureActiveDirectoryRBACDataSourceModel  `tfschema:"azure_active_directory_role_based_access_control"`
 	CurrentKubernetesVersion string                                     `tfschema:"current_kubernetes_version"`
 	DNSPrefix                string                                     `tfschema:"dns_prefix"`
 	FQDN                     string                                     `tfschema:"fully_qualified_domain_name"`
@@ -47,6 +48,8 @@ type KubernetesAutomaticClusterDataSourceModel struct {
 	KubeConfig               []KubeConfigModel                          `tfschema:"kube_config"`
 	KubeConfigRaw            string                                     `tfschema:"kube_config_raw"`
 	KubeletIdentity          []KubeletIdentityDataSourceModel           `tfschema:"kubelet_identity"`
+	LocalAccountDisabled     bool                                       `tfschema:"local_account_disabled"`
+	MicrosoftDefender        []MicrosoftDefenderDataSourceModel         `tfschema:"microsoft_defender"`
 	Monitor                  []MonitorProfileDataSourceModel            `tfschema:"monitor"`
 	NodeResourceGroup        string                                     `tfschema:"node_resource_group"`
 	NodeResourceGroupID      string                                     `tfschema:"node_resource_group_id"`
@@ -82,6 +85,15 @@ type KubeletIdentityDataSourceModel struct {
 	ClientID               string `tfschema:"client_id"`
 	ObjectID               string `tfschema:"object_id"`
 	UserAssignedIdentityID string `tfschema:"user_assigned_identity_id"`
+}
+
+type AzureActiveDirectoryRBACDataSourceModel struct {
+	AdminGroupObjectIDs []string `tfschema:"admin_group_object_ids"`
+	TenantID            string   `tfschema:"tenant_id"`
+}
+
+type MicrosoftDefenderDataSourceModel struct {
+	LogAnalyticsWorkspaceID string `tfschema:"log_analytics_workspace_id"`
 }
 
 type MonitorProfileDataSourceModel struct {
@@ -137,6 +149,24 @@ func (KubernetesAutomaticClusterDataSource) Attributes() map[string]*pluginsdk.S
 						Elem:     &pluginsdk.Schema{Type: pluginsdk.TypeString},
 					},
 					"subnet_id": {
+						Type:     pluginsdk.TypeString,
+						Computed: true,
+					},
+				},
+			},
+		},
+
+		"azure_active_directory_role_based_access_control": {
+			Type:     pluginsdk.TypeList,
+			Computed: true,
+			Elem: &pluginsdk.Resource{
+				Schema: map[string]*pluginsdk.Schema{
+					"admin_group_object_ids": {
+						Type:     pluginsdk.TypeList,
+						Computed: true,
+						Elem:     &pluginsdk.Schema{Type: pluginsdk.TypeString},
+					},
+					"tenant_id": {
 						Type:     pluginsdk.TypeString,
 						Computed: true,
 					},
@@ -248,6 +278,24 @@ func (KubernetesAutomaticClusterDataSource) Attributes() map[string]*pluginsdk.S
 		"kubernetes_version": {
 			Type:     pluginsdk.TypeString,
 			Computed: true,
+		},
+
+		"local_account_disabled": {
+			Type:     pluginsdk.TypeBool,
+			Computed: true,
+		},
+
+		"microsoft_defender": {
+			Type:     pluginsdk.TypeList,
+			Computed: true,
+			Elem: &pluginsdk.Resource{
+				Schema: map[string]*pluginsdk.Schema{
+					"log_analytics_workspace_id": {
+						Type:     pluginsdk.TypeString,
+						Computed: true,
+					},
+				},
+			},
 		},
 
 		"monitor": {
@@ -484,6 +532,12 @@ func (KubernetesAutomaticClusterDataSource) Read() sdk.ResourceFunc {
 
 					state.ServiceMeshProfile = flattenKubernetesAutomaticClusterDataSourceServiceMeshProfile(props.ServiceMeshProfile)
 
+					state.AzureActiveDirectoryRBAC = flattenKubernetesAutomaticClusterDataSourceAzureActiveDirectoryRBAC(props.AadProfile)
+
+					state.LocalAccountDisabled = pointer.From(props.DisableLocalAccounts)
+
+					state.MicrosoftDefender = flattenKubernetesAutomaticClusterDataSourceMicrosoftDefender(props.SecurityProfile)
+
 					monitor, err := flattenKubernetesAutomaticClusterMonitorProfile(props.AzureMonitorProfile, props.AddonProfiles)
 					if err != nil {
 						return fmt.Errorf("flattening `monitor`: %w", err)
@@ -525,6 +579,31 @@ func (KubernetesAutomaticClusterDataSource) Read() sdk.ResourceFunc {
 			return metadata.Encode(&state)
 		},
 	}
+}
+
+func flattenKubernetesAutomaticClusterDataSourceAzureActiveDirectoryRBAC(input *managedclusters.ManagedClusterAADProfile) []AzureActiveDirectoryRBACDataSourceModel {
+	output := make([]AzureActiveDirectoryRBACDataSourceModel, 0, 1)
+
+	for _, aadProfile := range flattenKubernetesAutomaticClusterAzureActiveDirectoryRBAC(input) {
+		output = append(output, AzureActiveDirectoryRBACDataSourceModel{
+			AdminGroupObjectIDs: aadProfile.AdminGroupObjectIDs,
+			TenantID:            aadProfile.TenantID,
+		})
+	}
+
+	return output
+}
+
+func flattenKubernetesAutomaticClusterDataSourceMicrosoftDefender(input *managedclusters.ManagedClusterSecurityProfile) []MicrosoftDefenderDataSourceModel {
+	output := make([]MicrosoftDefenderDataSourceModel, 0, 1)
+
+	for _, defender := range flattenKubernetesAutomaticClusterMicrosoftDefender(input) {
+		output = append(output, MicrosoftDefenderDataSourceModel{
+			LogAnalyticsWorkspaceID: defender.LogAnalyticsWorkspaceID,
+		})
+	}
+
+	return output
 }
 
 func flattenKubernetesAutomaticClusterDataSourceMonitorProfile(input []MonitorProfileModel) []MonitorProfileDataSourceModel {
