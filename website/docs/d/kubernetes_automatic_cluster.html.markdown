@@ -215,7 +215,7 @@ A `web_app_routing_ingress` block exports the following:
 
 * `dns_zone_ids` - A list of DNS Zone IDs associated with the web app routing ingress.
 
-* `default_nginx_controller` - The default Nginx controller for the web app routing ingress.
+* `default_nginx_controller` - The default Nginx controller for the web app routing ingress. This is empty when no default NGINX Ingress Controller is deployed.
 
 * `istio_enabled` - If Istio is enabled for the web app routing ingress.
 
